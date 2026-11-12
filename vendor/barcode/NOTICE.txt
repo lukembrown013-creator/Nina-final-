@@ -1,0 +1,7 @@
+Barcode decoding, bundled so scanning does not depend on an outside server.
+
+- barcode-detector 3.2.0 (MIT License) by Sec-ant — https://github.com/Sec-ant/barcode-detector
+- zxing-wasm 3.1.0 (MIT License) by Sec-ant — https://github.com/Sec-ant/zxing-wasm
+- ZXing-C++ (Apache License 2.0) — https://github.com/zxing-cpp/zxing-cpp
+
+Files here are unmodified copies from those packages.

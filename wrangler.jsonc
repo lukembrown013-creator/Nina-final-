@@ -1,0 +1,16 @@
+{
+  "name": "nina-fit",
+  "compatibility_date": "2026-11-01",
+  "main": "worker.js",
+  "assets": {
+    "directory": "./",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  // No database id on purpose: the database is created automatically on the first deploy,
+  // and its tables are created automatically the first time the app is used.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "nina-fit" }
+  ],
+  "observability": { "enabled": true }
+}
