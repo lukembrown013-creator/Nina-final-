@@ -36,6 +36,14 @@ Open the app, go to **Settings** (the sliders button on the Today screen).
 
 Everything else works without steps 3 and 4.
 
+## Loading a plan (e.g. Road to 120)
+
+A plan is a separate `.json` file, kept **out of this repository** because it holds personal
+details. In the app: Settings > Your plan > Load a plan file. The plan then lives in that
+person's own data (synced to their account) and drives daily calories and macros by phase,
+off days and treat days, weekly targets, the split on Today, the evening check-in, the
+pre-workout glucose reminder and what the coach knows. Loading an updated file replaces it.
+
 ## What is where
 
 | File | What it does |
@@ -49,6 +57,7 @@ Everything else works without steps 3 and 4.
 | `js/progress.js` | Weight, measurements, strength, photos |
 | `js/coach.js` | The AI coach chat |
 | `js/oura.js` | Oura steps and readiness (kept apart from the coach on purpose) |
+| `js/program.js`, `js/road.js` | A loaded plan: the day-by-day rules, and its screens |
 | `js/settings.js`, `js/sync.js`, `js/store.js` | Settings, account and sync, on-phone storage |
 | `worker.js` | The server: accounts, sync, food lookup, AI, Oura |
 | `vendor/barcode/` | The barcode decoder, bundled so scanning has no outside dependency |
@@ -59,7 +68,7 @@ Everything else works without steps 3 and 4.
   visible to the coach.
 - **Oura data is never sent to the AI.** Oura's API agreement forbids it. The Oura cache lives
   outside the app's main data, the readiness note is plain if/else rules, and `coach.js` never
-  imports `oura.js`. Keep it that way when changing things.
+  imports `oura.js` (or `road.js`, which reads Oura steps). Keep it that way when changing things.
 - API keys are stored on the server and are never sent back to a phone.
 
 ## Limits worth knowing
@@ -72,6 +81,9 @@ Everything else works without steps 3 and 4.
 - Photo and description estimates are estimates. Expect them to be in the right range, not exact.
 - Each account can send up to 120 coach messages and 40 meal estimates a day.
 - Apple Health cannot be read by a web app, so steps come from Oura or are typed in.
+
+- The AI model in use (Claude Sonnet 5.5) rejects forced tool calls, so meal estimates use
+  structured output (`output_config.format`). Keep that in mind if the model is changed.
 
 ## Testing locally
 

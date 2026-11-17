@@ -1,7 +1,7 @@
 // All app data lives on this device. It is kept in memory in `state` and written to
 // IndexedDB (falling back to localStorage) every time something changes.
 const DB_NAME = 'nina-fit', STORE = 'kv', LS_PREFIX = 'ninafit:';
-export const APP_ID = 'nina-fit', VERSION = 2;
+export const APP_ID = 'nina-fit', VERSION = 3;
 
 export const defaultSettings = () => ({
   name: 'Nina',
@@ -19,7 +19,7 @@ export const defaultSettings = () => ({
 });
 
 const KEYS = ['settings', 'weights', 'measurements', 'foods', 'meals', 'foodLog', 'templates', 'workouts', 'customExercises',
-  'todos', 'events', 'habits', 'habitLog', 'notes', 'steps', 'chat', 'activeWorkout', 'photos'];
+  'todos', 'events', 'habits', 'habitLog', 'notes', 'steps', 'chat', 'plan', 'cardio', 'dayTypes', 'checkins', 'activeWorkout', 'photos'];
 // Keys that sync to the cloud (when signed in). Photos never leave this device, and an
 // in-progress workout is just scratch state — neither belongs in the synced payload.
 export const SYNC_KEYS = KEYS.filter(k => k !== 'activeWorkout' && k !== 'photos');
@@ -41,6 +41,10 @@ export const state = {
   notes: [],            // { date, text } — a free note per day
   steps: [],            // { date, n } — steps typed in by hand (Oura steps are never stored here)
   chat: [],             // { role: 'me' | 'ai', text, did: [..], ts } — recent coach conversation
+  plan: null,           // a loaded plan file's contents (see program.js), or null
+  cardio: [],           // { id, date, min, kind }
+  dayTypes: [],         // { date, type: 'track' | 'off' | 'treat' } — her overrides of the plan's day types
+  checkins: [],         // { date, answers: {...}, sunday: {...} | null } — the evening check-in
   activeWorkout: null,
   photos: []            // { id, date, blob } — stored only on this device, never synced or exported
 };
@@ -97,7 +101,7 @@ export async function load() {
   for (const k of KEYS) {
     const v = await read(k);
     if (k === 'settings') state.settings = mergeSettings(v);
-    else if (k === 'activeWorkout') state.activeWorkout = v || null;
+    else if (k === 'activeWorkout' || k === 'plan') state[k] = v || null;
     else state[k] = Array.isArray(v) ? v : [];
   }
   // Ask the browser not to evict this data under storage pressure.
@@ -127,6 +131,7 @@ export function importData(obj) {
   for (const k of KEYS) {
     if (k === 'activeWorkout' || k === 'photos') continue; // never touched by backup/restore
     if (k === 'settings') state.settings = mergeSettings(obj.data.settings);
+    else if (k === 'plan') state.plan = obj.data.plan && typeof obj.data.plan === 'object' ? obj.data.plan : null;
     else state[k] = Array.isArray(obj.data[k]) ? obj.data[k] : [];
   }
   state.settings.onboarded = true;
@@ -136,7 +141,7 @@ export function importData(obj) {
 export function wipe() {
   for (const k of KEYS) {
     if (k === 'settings') state.settings = defaultSettings();
-    else if (k === 'activeWorkout') state.activeWorkout = null;
+    else if (k === 'activeWorkout' || k === 'plan') state[k] = null;
     else state[k] = [];
   }
   save(...KEYS);

@@ -53,4 +53,34 @@ const RAW = [
   ['Matcha latte', '12 oz', 190, 9, 26, 5], ['Orange juice', '1 cup', 112, 1.7, 26, 0.5], ['Kombucha', '1 bottle (16 oz)', 60, 0, 14, 0],
   ['Wine, red', '5 oz', 125, 0.1, 3.8, 0], ['Beer', '12 oz', 153, 1.6, 12.6, 0], ['Sports drink', '20 oz', 140, 0, 36, 0], ['Honey', '1 tbsp', 64, 0.1, 17.3, 0]
 ];
-export const COMMON_FOODS = RAW.map(([name, serving, kcal, p, c, f]) => ({ name, serving, kcal, p, c, f, builtin: true }));
+// Typical weight in grams of the serving above, so any food can be logged by weight.
+// Foods whose serving already names a weight, e.g. "4 oz (113 g)", are read from the label.
+const GRAMS = {
+  'Banana': 118, 'Apple': 182, 'Orange': 131, 'Strawberries': 152, 'Blueberries': 148, 'Raspberries': 123, 'Grapes': 151,
+  'Mango': 165, 'Pineapple': 165, 'Watermelon': 152, 'Avocado': 100, 'Dates (Medjool)': 48,
+  'Broccoli, cooked': 156, 'Spinach, raw': 60, 'Carrots': 61, 'Bell pepper': 119, 'Cucumber': 104, 'Tomato': 123,
+  'Sweet potato, baked': 114, 'Potato, baked': 173, 'Green beans, cooked': 125, 'Asparagus, cooked': 90, 'Zucchini, cooked': 180,
+  'Mixed salad greens': 85, 'Corn': 90, 'Edamame, shelled': 78,
+  'Bacon': 16, 'Egg, whole': 50, 'Egg whites': 99, 'Black beans, cooked': 86, 'Chickpeas, cooked': 82, 'Lentils, cooked': 99,
+  'Cottage cheese, 2%': 113, 'Milk, 2%': 244, 'Milk, whole': 244, 'Almond milk, unsweetened': 240, 'Oat milk': 240,
+  'String cheese': 28, 'Butter': 14, 'Cream cheese': 15,
+  'White rice, cooked': 158, 'Brown rice, cooked': 195, 'Quinoa, cooked': 185, 'Pasta, cooked': 140, 'Oatmeal, cooked': 234,
+  'Bread, whole wheat': 32, 'Bread, white': 29, 'Sourdough bread': 45, 'Bagel, plain': 105, 'English muffin': 57,
+  'Tortilla, flour (8 in)': 49, 'Tortilla, corn': 26, 'Granola': 55, 'Rice cake': 9, 'Pancake': 38, 'Cereal, Cheerios-style': 28,
+  'Peanut butter': 32, 'Almond butter': 32, 'Chia seeds': 12, 'Olive oil': 13.5, 'Hummus': 30, 'Guacamole': 30, 'Trail mix': 37,
+  'Pizza, cheese': 107, 'Sushi roll, California': 200, 'Scrambled eggs': 122, 'French fries': 117, 'Mac and cheese': 200,
+  'Chicken noodle soup': 240, 'Protein bar': 60, 'Granola bar': 30, 'Popcorn, air-popped': 24, 'Ice cream, vanilla': 66,
+  'Chocolate chip cookie': 30, 'Coffee, black': 237, 'Orange juice': 248, 'Honey': 21
+};
+// Reads a weight out of a serving label: "4 oz (113 g)" -> 113, "100 g" -> 100, "1 oz" -> 28.3.
+export function gramsFromLabel(serving) {
+  const t = String(serving || '');
+  let m = t.match(/(\d+(?:\.\d+)?)\s*(?:g|grams?)\b/i);
+  if (m) return +m[1];
+  m = t.match(/(\d+(?:\.\d+)?)\s*ml\b/i);
+  if (m) return +m[1];
+  m = t.match(/(\d+(?:\.\d+)?)\s*(?:fl\.?\s*)?oz\b/i);
+  if (m) return Math.round(+m[1] * 28.35 * 10) / 10;
+  return null;
+}
+export const COMMON_FOODS = RAW.map(([name, serving, kcal, p, c, f]) => ({ name, serving, g: GRAMS[name] || gramsFromLabel(serving), kcal, p, c, f, builtin: true }));

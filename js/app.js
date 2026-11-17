@@ -12,6 +12,8 @@ import { renderWorkout, initWorkout } from './workout.js';
 import { openCoach } from './coach.js';
 import { pullIfNewer, loadConfig } from './sync.js';
 import { refreshOura } from './oura.js';
+import { guardWorkoutStart } from './road.js';
+import { plan } from './program.js';
 
 const views = { home: renderHome, plan: renderPlan, train: renderTrain, food: renderFood, progress: renderProgress, settings: renderSettings };
 
@@ -59,8 +61,10 @@ actions['quick'] = () => {
 <button data-action="q-event"><span class="p">${icon.cal}</span>Calendar event</button>
 <button data-action="q-weight"><span class="b">${icon.scale}</span>Log weight</button>
 <button data-action="q-coach"><span>${icon.sparkle}</span>Ask coach</button>
+<button data-action="q-cardio"><span class="s">${icon.flame}</span>Cardio</button>
+${plan() && plan().checkin ? `<button data-action="q-checkin"><span class="p">${icon.heart}</span>Check-in</button>` : `<button data-action="q-meas"><span class="b">${icon.chart}</span>Measurements</button>`}
 </div>
-<button class="link" data-action="q-meas" style="align-self:center">Log body measurements</button>`);
+${plan() && plan().checkin ? '<button class="link" data-action="q-meas" style="align-self:center">Log body measurements</button>' : ''}`);
 };
 actions['q-food'] = () => { closeSheet(); openAddFood(); };
 actions['q-todo'] = () => { closeSheet(); openQuickTodo(); };
@@ -68,6 +72,8 @@ actions['q-event'] = () => { closeSheet(); openEventSheet(nav.tab === 'plan' ? p
 actions['q-coach'] = () => { closeSheet(); openCoach(); };
 actions['q-weight'] = () => { closeSheet(); actions['weight-log']({ dataset: {} }); };
 actions['q-meas'] = () => { closeSheet(); actions['meas-log'](); };
+actions['q-cardio'] = () => { closeSheet(); actions['cardio-log']({ dataset: {} }); };
+actions['q-checkin'] = () => { closeSheet(); actions['checkin-open']({ dataset: {} }); };
 actions['q-workout'] = () => {
   closeSheet();
   if (state.activeWorkout) return actions['wk-resume']();
@@ -129,11 +135,41 @@ document.addEventListener('focusin', e => {
   const el = e.target;
   if (el.matches && el.matches('input[inputmode=decimal],input[inputmode=numeric]')) setTimeout(() => { try { el.select(); } catch { /* ignore */ } }, 0);
 });
-// Keep bottom sheets and the coach above the on-screen keyboard.
-if (window.visualViewport) {
-  const setVvh = () => document.documentElement.style.setProperty('--vvh', window.visualViewport.height + 'px');
-  window.visualViewport.addEventListener('resize', setVvh); setVvh();
+// ---------- on-screen keyboard ----------
+// On iPhone the keyboard covers the bottom of the page instead of shrinking it, so the whole
+// app is sized and moved to the visible part of the screen (the visual viewport). Everything
+// pinned to the bottom (the coach's message box, sheets, the workout screen) then sits right
+// above the keyboard, and whatever she is typing in is scrolled into view.
+const isTyping = el => !!el && el.matches && el.matches('input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=hidden]), textarea');
+function revealFocused() {
+  const el = document.activeElement;
+  if (!isTyping(el)) return;
+  const box = el.closest('.coach-foot') ? null : el.closest('#view, .sheet, .msgs, .wk-body');
+  if (!box) return;
+  const r = el.getBoundingClientRect(), b = box.getBoundingClientRect(), margin = 18;
+  if (r.bottom > b.bottom - margin) box.scrollTop += r.bottom - b.bottom + margin;
+  else if (r.top < b.top + margin) box.scrollTop -= b.top + margin - r.top;
 }
+if (window.visualViewport) {
+  const vv = window.visualViewport, rootStyle = document.documentElement.style;
+  let full = vv.height;
+  const sync = () => {
+    if (!isTyping(document.activeElement) || vv.height > full) full = vv.height; // remember the keyboard-free height
+    const kb = isTyping(document.activeElement) && vv.height < full - 120;
+    rootStyle.setProperty('--vvh', Math.round(vv.height) + 'px');
+    rootStyle.setProperty('--vvt', Math.round(Math.max(0, vv.offsetTop)) + 'px');
+    document.body.classList.toggle('kb', kb);
+    if (kb) { requestAnimationFrame(revealFocused); const m = $('#coach-msgs'); if (m && !$('#coach').hidden) m.scrollTop = m.scrollHeight; }
+  };
+  vv.addEventListener('resize', sync); vv.addEventListener('scroll', sync);
+  window.addEventListener('orientationchange', () => setTimeout(() => { full = vv.height; sync(); }, 400));
+  document.addEventListener('focusin', () => setTimeout(sync, 60));
+  document.addEventListener('focusout', () => setTimeout(sync, 60));
+  sync();
+}
+document.addEventListener('focusin', e => { if (isTyping(e.target)) setTimeout(revealFocused, 350); });
+// iOS sometimes scrolls the page itself while the keyboard opens; put it back.
+window.addEventListener('scroll', () => { if (window.scrollY && !document.body.classList.contains('kb')) window.scrollTo(0, 0); }, { passive: true });
 
 // The + button tucks away while scrolling down or typing, so it never sits on top of a button.
 let lastTop = 0;
@@ -168,6 +204,7 @@ async function boot() {
   renderWorkout();
   $('#workout').hidden = true; // an unfinished workout stays minimized until resumed
   initWorkout();
+  guardWorkoutStart();
   if (!state.settings.onboarded) { step = 0; renderIntro(); }
   // Coming back from Oura's sign-in page.
   const back = new URLSearchParams(location.search).get('oura');

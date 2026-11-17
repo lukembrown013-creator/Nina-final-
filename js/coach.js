@@ -12,6 +12,7 @@ import { actions, submits, nav, buzz, confirmSheet, icon } from './ui.js';
 import { api, isSignedIn, config } from './sync.js';
 import { addTodo, addEvent, todosFor } from './plan.js';
 import { logFood } from './food.js';
+import { planContext, targetsFor, logCardio, CARDIO_KINDS } from './program.js';
 
 let busy = false, liveDid = [];
 const IDEAS = ['Plan my week with me', 'What should I eat to hit my protein today?', 'Build me a 45-minute leg day', 'Add a to-do for tomorrow', 'How is my week going?'];
@@ -28,7 +29,9 @@ function buildContext() {
     name: s.name || null,
     now: `${t} ${now.toLocaleDateString('en-US', { weekday: 'long' })} ${now.toTimeString().slice(0, 5)}`,
     units: { weight: s.units, length: s.lenUnits },
-    dailyTargets: s.targets, stepGoal: s.stepGoal || null,
+    dailyTargets: (({ kcal, p, c, f }) => ({ kcal, protein: p, carbs: c, fat: f }))(targetsFor(t)),
+    plan: planContext(t),
+    cardioToday: state.cardio.filter(c => c.date === t).map(c => `${c.min} min ${c.kind}`),
     foodToday: state.foodLog.filter(e => e.date === t).map(e => ({ meal: e.meal, name: e.name, kcal: Math.round((e.kcal || 0) * (e.qty ?? 1)), protein: Math.round((e.p || 0) * (e.qty ?? 1)) })),
     nutritionLast7Days: days,
     weight: last ? { latest: +toDisp(last.kg).toFixed(1), trend: +toDisp(last.trend).toFixed(1), weeklyChange: ch == null ? null : +toDisp(ch).toFixed(1), unit: wu(), on: last.date } : null,
@@ -70,6 +73,11 @@ const TOOLS = {
     if (i >= 0) state.weights[i].kg = kg; else state.weights.push({ id: uid(), date, kg });
     save('weights');
     return { say: `Logged weight: ${fmt(v, 1)} ${a.unit}`, result: `Saved for ${date}.` };
+  },
+  log_cardio(a) {
+    const kind = CARDIO_KINDS.includes(a.kind) ? a.kind : 'Zone 2', date = isDate(a.date) ? a.date : ymd();
+    if (!logCardio(date, a.minutes, kind)) throw new Error('Cardio needs a number of minutes.');
+    return { say: `Logged ${Math.round(a.minutes)} min ${kind.toLowerCase()}`, result: `Logged on ${date}.` };
   },
   create_workout(a) {
     const name = String(a.name || '').trim().slice(0, 40), list = Array.isArray(a.exercises) ? a.exercises : [];

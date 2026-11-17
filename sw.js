@@ -1,11 +1,11 @@
 // Offline support. The app shell is cached on first visit, served from cache
 // instantly afterwards, and refreshed in the background when online.
-const CACHE = 'ninafit-v3';
+const CACHE = 'ninafit-v4';
 const ASSETS = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/ui.js', 'js/util.js', 'js/store.js', 'js/calc.js', 'js/exercises.js',
   'js/home.js', 'js/plan.js', 'js/train.js', 'js/workout.js', 'js/food.js', 'js/foods-db.js', 'js/progress.js', 'js/settings.js',
-  'js/sync.js', 'js/scan.js', 'js/coach.js', 'js/oura.js',
+  'js/sync.js', 'js/scan.js', 'js/coach.js', 'js/oura.js', 'js/program.js', 'js/road.js',
   'fonts/quicksand.woff2', 'fonts/caveat.woff2',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'
 ];

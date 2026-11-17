@@ -3,6 +3,8 @@ import { state, save } from './store.js';
 import { esc, uid, ymd, addDays, weekStart, parseYmd, dow, DAYS, monthStart, addMonths, monthLabel, longDate, niceDate, niceTime, fmt, sprig } from './util.js';
 import { dayTotals } from './calc.js';
 import { actions, inputs, submits, nav, openSheet, setSheet, closeSheet, toast, buzz, celebrate, icon } from './ui.js';
+import { plan, specialDay, dayType } from './program.js';
+import { planDayCard, checkinSummary, phaseColor } from './road.js';
 
 export const planNav = { date: ymd(), month: monthStart(ymd()) };
 
@@ -210,11 +212,14 @@ function calendarHtml() {
   const first = weekStart(m), last = addDays(addMonths(m, 1), -1), weeks = Math.ceil((dow(m) + parseYmd(last).getDate()) / 7);
   const ev = new Set(state.events.map(e => e.date)), wk = new Set(state.workouts.map(w => w.date));
   const td = new Set(state.todos.filter(t => t.date && !t.done).map(t => t.date));
+  const hasPlan = !!plan();
   let cells = '';
   for (let i = 0; i < weeks * 7; i++) {
     const d = addDays(first, i), out = d.slice(0, 7) !== m.slice(0, 7);
     const dots = (ev.has(d) ? '<i class="p"></i>' : '') + (td.has(d) ? '<i></i>' : '') + (wk.has(d) ? '<i class="s"></i>' : '');
-    cells += `<button class="${out ? 'out ' : ''}${d === today ? 'today ' : ''}${d === planNav.date ? 'sel' : ''}" data-action="plan-day" data-d="${d}" aria-label="${longDate(d)}"${d === planNav.date ? ' aria-current="date"' : ''}>${parseYmd(d).getDate()}<span class="dots">${dots}</span></button>`;
+    const pc = hasPlan && !out ? phaseColor(d) : null, sd = hasPlan ? specialDay(d) : null, ty = pc ? dayType(d) : 'track';
+    const mark = ty === 'off' ? ' m-off' : ty === 'treat' ? ' m-treat' : sd && sd.type === 'checkin' ? ' m-check' : '';
+    cells += `<button class="${out ? 'out ' : ''}${pc ? 'ph ph-' + pc + ' ' : ''}${mark} ${d === today ? 'today ' : ''}${d === planNav.date ? 'sel' : ''}" data-action="plan-day" data-d="${d}" aria-label="${longDate(d)}"${d === planNav.date ? ' aria-current="date"' : ''}>${parseYmd(d).getDate()}<span class="dots">${dots}</span></button>`;
   }
   return `<section class="card lg tape">
 <div class="row between"><button class="icon-btn" data-action="plan-month" data-d="-1" aria-label="Previous month">${icon.chevL}</button>
@@ -224,7 +229,7 @@ function calendarHtml() {
 <div class="mcal">${cells}</div>
 <div class="row" style="gap:14px;justify-content:center;flex-wrap:wrap"><span class="muted small row" style="gap:5px"><i style="width:7px;height:7px;border-radius:4px;background:var(--pink-d)"></i>event</span>
 <span class="muted small row" style="gap:5px"><i style="width:7px;height:7px;border-radius:4px;background:var(--blue)"></i>to-do</span>
-<span class="muted small row" style="gap:5px"><i style="width:7px;height:7px;border-radius:4px;background:var(--sage-d)"></i>workout</span></div></section>`;
+<span class="muted small row" style="gap:5px"><i style="width:7px;height:7px;border-radius:4px;background:var(--sage-d)"></i>workout</span>${hasPlan ? `<span class="muted small row" style="gap:5px"><i class="key-off"></i>off</span><span class="muted small row" style="gap:5px"><i class="key-treat"></i>treat</span><span class="muted small row" style="gap:5px"><i class="key-check"></i>check-in</span>` : ''}</div></section>`;
 }
 
 export function renderPlan() {
@@ -245,6 +250,7 @@ ${date === today ? '' : `<button class="chip on" data-action="plan-today" style=
 ${calendarHtml()}
 <div class="sec-head"><h2>${date === today ? 'today' : esc(longDate(date).toLowerCase())}</h2>
 <button class="link" data-action="event-add" data-date="${date}">${icon.plus} Event</button></div>
+${planDayCard(date)}
 ${pills ? `<div class="chips">${pills}</div>` : ''}
 ${events.length ? `<div class="list">${events.map(e => `<button class="event press" data-action="event-edit" data-id="${e.id}">
 ${e.time ? `<span class="event-time">${niceTime(e.time)}</span>` : `<span class="event-time" style="background:var(--tint);color:var(--blue-d)">all day</span>`}
@@ -257,6 +263,7 @@ ${addRow(date, 'day', date === today ? 'Add a to-do for today' : 'Add a to-do fo
 ${any.length ? `<div class="list" style="box-shadow:none">${any.map(t => todoRow(t)).join('')}</div>` : ''}
 ${addRow('', 'any', 'Add something for whenever')}</section>
 ${habitsCard(date)}
+${checkinSummary(date)}
 <section class="card"><span class="hand">notes</span>
 <textarea data-input="note" data-date="${date}" placeholder="Anything to remember about this day" maxlength="2000" aria-label="Notes for this day">${esc(noteFor(date))}</textarea></section>`;
 }

@@ -6,12 +6,15 @@ import { actions, submits, nav, openSheet, closeSheet, toast, icon } from './ui.
 import { todosFor, todoRow, addRow } from './plan.js';
 import { ouraDay, readinessAdvice, oura } from './oura.js';
 import { isSignedIn, config } from './sync.js';
+import { plan, targetsFor, stepGoalFor, planDay, weightAvgKg, lbToKg } from './program.js';
+import { planBanner, sessionCard, cardioTile, yogaMorningCard, checkinPrompt } from './road.js';
 
 const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent || '');
 const isStandalone = () => navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
 
 function nutritionCard(t) {
-  const tot = dayTotals(t), tg = state.settings.targets;
+  const tot = dayTotals(t), tg = targetsFor(t);
+  if (tg.type === 'off') return '';
   const pct = tg.kcal ? tot.kcal / tg.kcal : 0, left = tg.kcal ? tg.kcal - tot.kcal : null;
   const macro = (label, val, target, color) => `<div class="col">
 <span class="muted small" style="font-weight:700">${label}</span>
@@ -27,13 +30,13 @@ ${tg.kcal
     ? `<span class="muted">of ${fmt(tg.kcal, 0)} kcal</span><span style="font-size:13px;font-weight:700;color:var(--blue-d)">${left >= 0 ? fmt(left, 0) + ' left' : fmt(-left, 0) + ' over'}</span>`
     : `<span class="muted">kcal today</span><button class="link" data-action="tab" data-tab="settings">Set a goal</button>`}
 </div></div>
-<div class="grid3">${macro('Protein', tot.p, tg.p, '#6E89A8')}${macro('Carbs', tot.c, tg.c, '#D9A29A')}${macro('Fat', tot.f, tg.f, '#D9BC6A')}</div></section>`;
+<div class="grid3">${macro('Protein', tot.p, tg.p, '#6E89A8')}${macro('Carbs', tot.c, tg.c, '#D9A29A')}${macro(tg.fatMin ? `Fat (min ${tg.fatMin})` : 'Fat', tot.f, tg.f, '#D9BC6A')}</div></section>`;
 }
 
 // Steps come from Oura when it is connected, otherwise from what she types in.
 function stepsCard(t) {
   const o = ouraDay(t), manual = state.steps.find(s => s.date === t);
-  const n = o && o.steps != null ? o.steps : manual ? manual.n : null, goal = state.settings.stepGoal;
+  const n = o && o.steps != null ? o.steps : manual ? manual.n : null, goal = stepGoalFor(t);
   const fromOura = !!(o && o.steps != null);
   return `<section class="card stat press" data-action="${fromOura ? 'steps-info' : 'steps-log'}" style="--accent:var(--sage-d);--soft:var(--sage-soft)">
 <div class="row between"><span class="ico">${icon.steps}</span><span class="muted small" style="font-weight:700">${fromOura ? 'Oura' : n != null ? 'typed in' : ''}</span></div>
@@ -70,6 +73,15 @@ function weightCard() {
 <span class="label">Weight</span><span class="mid">–</span><span class="muted small">Tap to log</span></section>`;
   }
   const last = s[s.length - 1], ch = weeklyTrendChange(s);
+  const pd = planDay(ymd());
+  if (pd) { // her plan counts the 7-day average (off days left out), against this week's target
+    const avg = weightAvgKg(ymd()), tgt = pd.week && pd.week.target != null ? toDisp(lbToKg(pd.week.target)) : null;
+    return `<section class="card stat press" data-action="road-open" style="--accent:var(--pink-d);--soft:var(--pink-soft)"><div class="row between"><span class="ico">${icon.scale}</span>
+<button class="link" data-action="weight-log" style="min-height:34px">${icon.plus} Log</button></div>
+<span class="label">7-day average</span>
+<span class="mid">${avg == null ? '–' : `<span data-count="${toDisp(avg).toFixed(1)}" data-dp="1">${fmt(toDisp(avg), 1)}</span>`}<span class="unit"> ${wu()}</span></span>
+<span class="muted small">${tgt != null ? `target ${fmt(tgt, 1)} this week` : 'skip the scale this week'}</span></section>`;
+  }
   const chTxt = ch == null ? 'Trend builds as you log' : `${ch > 0 ? '+' : ch < 0 ? '−' : ''}${fmt(Math.abs(toDisp(ch)), 1)} this week`;
   return `<section class="card stat press" data-action="tab" data-tab="progress" style="--accent:var(--pink-d);--soft:var(--pink-soft)"><div class="row between"><span class="ico">${icon.scale}</span>
 <span style="width:74px">${spark(s.slice(-30).map(x => x.trend), '#C98F87')}</span></div>
@@ -156,15 +168,19 @@ export function renderHome() {
   const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
   const hr = now.getHours(), greet = hr < 12 ? 'good morning' : hr < 18 ? 'good afternoon' : 'good evening';
   const showReady = oura.connected && config.oura && !hide.readiness;
-  const tiles = [hide.steps ? '' : stepsCard(t), showReady ? readinessCard(t) : '', hide.weight ? '' : weightCard(), hide.week ? '' : weekCard()].filter(Boolean);
+  const hasPlan = !!planDay(t);
+  const tiles = [hide.steps ? '' : stepsCard(t), showReady ? readinessCard(t) : '', hide.weight ? '' : weightCard(), hasPlan ? cardioTile(t) : '', hide.week || hasPlan ? '' : weekCard()].filter(Boolean);
   let grid = '';
   for (let i = 0; i < tiles.length; i += 2) grid += tiles[i + 1] ? `<div class="grid2">${tiles[i]}${tiles[i + 1]}</div>` : tiles[i];
   return `<header class="head"><div class="col" style="gap:4px"><span class="eyebrow">${esc(dateStr)}</span><h1>${greet}${s.name ? ', ' + esc(s.name.toLowerCase()) : ''}</h1></div>
 <div class="row" style="gap:8px"><button class="icon-btn" data-action="coach-open" aria-label="Ask your coach">${icon.sparkle}</button>
 <button class="icon-btn" data-action="tab" data-tab="settings" aria-label="Settings">${icon.gear}</button></div></header>
+${planBanner(t)}
+${yogaMorningCard(t)}
 ${hide.nutrition ? '' : nutritionCard(t)}
 ${grid}
-${hide.workout ? '' : workoutCard(t)}
+${hide.workout ? '' : sessionCard(t) || workoutCard(t)}
+${checkinPrompt(t)}
 ${hide.todo ? '' : todoCard(t)}
 ${hide.coach ? '' : coachCard()}
 ${hide.calendar ? '' : weekDots(t)}

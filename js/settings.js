@@ -5,6 +5,7 @@ import { $, esc, fmt, num, ymd } from './util.js';
 import { actions, inputs, submits, nav, openSheet, closeSheet, confirmSheet, toast, icon } from './ui.js';
 import { account, config, api, isSignedIn, isOwner, signup, login, signOut, pushNow, pullIfNewer, keepThisPhone, useCloudCopy, loadConfig } from './sync.js';
 import { oura, connectOura, disconnectOura, forgetOura, refreshOura } from './oura.js';
+import { planSettingsCard } from './road.js';
 
 const CARDS = [['nutrition', 'Nutrition'], ['steps', 'Steps'], ['readiness', 'Readiness'], ['weight', 'Weight'], ['week', 'Workouts this week'], ['workout', "Today's workout"], ['todo', 'To-do'], ['coach', 'Coach'], ['calendar', 'Week dots']];
 let admin = null; // owner-only setup info, loaded when Settings opens
@@ -24,7 +25,9 @@ ${accountHtml()}
 ${ouraHtml()}
 ${isOwner() ? ownerHtml() : ''}
 
-<section class="card" style="--accent:var(--pink-d);--soft:var(--pink-soft)"><span class="label">Daily goals</span>
+${planSettingsCard()}
+
+<section class="card" style="--accent:var(--pink-d);--soft:var(--pink-soft)"><span class="label">Daily goals${state.plan ? ' (outside the plan)' : ''}</span>
 ${numField('Calories', 'targets.kcal', t.kcal)}
 <div class="grid3">${numField('Protein g', 'targets.p', t.p, '–')}${numField('Carbs g', 'targets.c', t.c, '–')}${numField('Fat g', 'targets.f', t.f, '–')}</div>
 <span class="muted small" id="macro-note">${macroKcal ? `These macros add up to ${fmt(macroKcal, 0)} kcal.` : 'Leave any goal empty to track without one.'}</span>
@@ -174,6 +177,7 @@ function ownerHtml() {
 <span class="muted small" style="line-height:1.5">Needs an Anthropic API key from console.anthropic.com (pay-as-you-go, usually a few dollars a month for one person).</span>
 ${admin.aiFromSecret ? '' : `<form data-submit="admin-ai" class="add-row"><input type="password" name="key" placeholder="${admin.ai ? 'Paste a new key to replace' : 'Paste the API key'}" autocomplete="off" aria-label="Anthropic API key"><button class="btn primary" type="submit" style="width:auto;padding:0 16px">Save</button></form>
 ${admin.ai ? '<button class="link" data-action="admin-clear" data-k="anthropicKey" style="color:var(--danger)">Remove the key</button>' : ''}`}
+${admin.ai ? '<button class="btn ghost block" data-action="admin-test-ai">Test the AI connection</button>' : ''}
 
 <div class="row between" style="margin-top:6px"><span class="sub">Oura</span>${state1(admin.oura, admin.ouraFromSecret)}</div>
 <span class="muted small" style="line-height:1.5">Create an application at cloud.ouraring.com/oauth/applications and give it this redirect address:</span>
@@ -200,6 +204,16 @@ submits['admin-invite'] = v => putAdmin({ invite: (v.invite || '').trim() }, (v.
 actions['admin-clear'] = el => confirmSheet({ title: 'Remove it?', text: 'That feature switches off until a new key is saved.', ok: 'Remove', danger: true }, () => {
   putAdmin(el.dataset.k === 'oura' ? { ouraClientId: '', ouraClientSecret: '' } : { anthropicKey: '' }, 'Removed');
 });
+actions['admin-test-ai'] = async el => {
+  el.disabled = true; el.textContent = 'Testing…';
+  let r = null;
+  try { r = (await api('/admin/test-ai', { method: 'POST' })).body; } catch (e) { r = { ok: false, error: e.message }; }
+  el.disabled = false; el.textContent = 'Test the AI connection';
+  openSheet(`<div class="col"><h2 class="sheet-title">${r.ok ? 'all working' : 'not working yet'}</h2>
+<p class="muted" style="font-size:15px;line-height:1.5">${r.ok ? `The coach and meal estimates can reach the AI${r.model ? ' (' + esc(r.model) + ')' : ''}.` : esc(r.error || 'Unknown problem.')}</p>
+${r.detail ? `<span class="muted small" style="overflow-wrap:anywhere">Details from the AI service: ${esc(r.detail)}</span>` : ''}
+<button class="btn ghost block" data-action="sheet-close">Close</button></div>`);
+};
 actions['copy'] = async el => { try { await navigator.clipboard.writeText(el.dataset.t); toast('Copied'); } catch { toast('Press and hold to copy'); } };
 
 function setPath(key, val) {

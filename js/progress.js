@@ -1,10 +1,12 @@
+import { plan } from './program.js';
+import { roadHtml } from './road.js';
 // Progress tab: body weight trend, measurements, strength records, and on-device photos.
 import { state, save } from './store.js';
 import { $, esc, fmt, uid, num, ymd, parseYmd, addDays, niceDate, shortDate, lineChart, e1rm } from './util.js';
 import { weightSeries, weeklyTrendChange, siteSeries, historyFor, bestFor, trainedExercises, toDisp, toKg, wu, lenDisp, lenCm, lu, SITES } from './calc.js';
 import { actions, submits, nav, openSheet, closeSheet, closeAllSheets, confirmSheet, toast, buzz, icon } from './ui.js';
 
-export const progNav = { tab: 'body', range: 90, allWeights: false };
+export const progNav = { tab: 'plan', range: 90, allWeights: false };
 const day = s => parseYmd(s).getTime() / 864e5;
 const signed = (n, dp = 1) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${fmt(Math.abs(n), dp)}`;
 
@@ -67,11 +69,13 @@ function strengthHtml() {
 }
 
 export function renderProgress() {
+  const hasPlan = !!plan();
+  if (!hasPlan && progNav.tab === 'plan') progNav.tab = 'body';
   return `<header class="head"><h1>progress</h1></header>
-<div class="seg"><button class="${progNav.tab === 'body' ? 'on' : ''}" data-action="prog-tab" data-t="body">Body</button>
+<div class="seg">${hasPlan ? `<button class="${progNav.tab === 'plan' ? 'on' : ''}" data-action="prog-tab" data-t="plan">Plan</button>` : ''}<button class="${progNav.tab === 'body' ? 'on' : ''}" data-action="prog-tab" data-t="body">Body</button>
 <button class="${progNav.tab === 'strength' ? 'on' : ''}" data-action="prog-tab" data-t="strength">Strength</button>
 <button class="${progNav.tab === 'photos' ? 'on' : ''}" data-action="prog-tab" data-t="photos">Photos</button></div>
-${progNav.tab === 'body' ? bodyHtml() : progNav.tab === 'strength' ? strengthHtml() : photosHtml()}`;
+${progNav.tab === 'plan' ? roadHtml() : progNav.tab === 'body' ? bodyHtml() : progNav.tab === 'strength' ? strengthHtml() : photosHtml()}`;
 }
 
 actions['prog-tab'] = el => { progNav.tab = el.dataset.t; nav.render(true); };

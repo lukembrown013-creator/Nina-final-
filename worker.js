@@ -16,7 +16,7 @@ const json = (obj, status = 200, headers = {}) => new Response(JSON.stringify(ob
   status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers }
 });
 
-const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5']; // tried in order if one is unavailable
+const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-5']; // tried in order if one is unavailable
 const LIMITS = { chat: 120, meal: 40, loginfail: 15 };      // per user, per day
 const NINETY_DAYS = 1000 * 60 * 60 * 24 * 90;
 const UA = 'NinaFit/2.0 (personal single-household fitness app)';
@@ -229,6 +229,13 @@ async function putSync(request, env, user) {
 
 // ---------- food database (Open Food Facts, proxied so we can identify ourselves) ----------
 const round1 = n => Math.round((Number(n) || 0) * 10) / 10;
+// Grams in one serving, when the product says (needed to log by weight).
+function servingGrams(p) {
+  const q = Number(p.serving_quantity), unit = String(p.serving_quantity_unit || 'g').toLowerCase();
+  if (q > 0 && (unit === 'g' || unit === 'ml')) return Math.round(q * 10) / 10;
+  const m = String(p.serving_size || '').match(/(\d+(?:[.,]\d+)?)\s*(g|ml)\b/i);
+  return m ? Number(m[1].replace(',', '.')) : null;
+}
 function offFood(p) {
   const n = p.nutriments || {};
   const perServing = n['energy-kcal_serving'] != null && p.serving_size;
@@ -240,6 +247,7 @@ function offFood(p) {
   return {
     code: p.code || '', name, brand,
     serving: perServing ? String(p.serving_size) : '100 g',
+    g: perServing ? servingGrams(p) : 100,
     kcal: Math.round(Number(kcal) || 0), p: round1(pick('proteins')), c: round1(pick('carbohydrates')), f: round1(pick('fat'))
   };
 }
@@ -248,7 +256,7 @@ async function offFetch(env, url) {
   if (!res.ok) throw new Error('off ' + res.status);
   return res.json();
 }
-const OFF_FIELDS = 'code,product_name,brands,serving_size,nutriments';
+const OFF_FIELDS = 'code,product_name,brands,serving_size,serving_quantity,serving_quantity_unit,nutriments';
 async function foodLookup(env, barcode) {
   if (!/^[0-9]{6,14}$/.test(barcode)) return json({ error: 'That is not a valid barcode.' }, 400);
   let body;
@@ -310,36 +318,46 @@ async function callClaude(env, payload) {
     break;
   }
   const s = last ? last.res.status : 502;
-  if (s === 401 || s === 403) return { error: 'The AI key was rejected. The app owner should check it in Settings.', status: 502 };
-  if (s === 429 || s === 529) return { error: 'The AI service is busy right now. Try again in a minute.', status: 503 };
-  if (s === 400 && last.body?.error?.message?.includes('credit')) return { error: 'The AI account is out of credit. The app owner can top it up at console.anthropic.com.', status: 503 };
-  return { error: 'The AI service had a problem. Try again in a moment.', status: 502 };
+  const detail = String(last?.body?.error?.message || '').slice(0, 300);
+  const fail = (error, status) => ({ error, status, detail });
+  if (s === 401 || s === 403) return fail('The AI key was rejected. The app owner should check it in Settings.', 502);
+  if (s === 429 || s === 529) return fail('The AI service is busy right now. Try again in a minute.', 503);
+  if (/credit|billing|balance/i.test(detail)) return fail('The AI account is out of credit. The app owner can top it up at console.anthropic.com.', 503);
+  return fail('The AI service had a problem. Try again in a moment.', 502);
 }
 
-const MEAL_TOOL = {
-  name: 'report_meal',
-  description: 'Report the foods identified in the meal with estimated nutrition.',
-  input_schema: {
-    type: 'object',
-    properties: {
+// The meal estimate comes back as JSON that must match this schema. Sonnet 5.5 rejects a
+// forced tool call (tool_choice "tool"/"any"), so this uses structured outputs instead.
+const MEAL_SCHEMA = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
       items: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: 'Short food name, e.g. "Grilled chicken breast"' },
-            serving: { type: 'string', description: 'Estimated portion in everyday terms, e.g. "1 cup", "150 g", "2 slices"' },
-            kcal: { type: 'number' }, p: { type: 'number', description: 'protein grams' },
-            c: { type: 'number', description: 'carbohydrate grams' }, f: { type: 'number', description: 'fat grams' }
-          },
-          required: ['name', 'serving', 'kcal', 'p', 'c', 'f']
-        }
-      },
-      note: { type: 'string', description: 'One short sentence on what was assumed or is uncertain (portion sizes, hidden oils, sauces). Empty if nothing notable.' }
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Short food name, e.g. "Grilled chicken breast"' },
+          serving: { type: 'string', description: 'Estimated portion in everyday terms, e.g. "1 cup", "2 slices"' },
+          grams: { type: 'number', description: 'Estimated weight of that portion in grams' },
+          kcal: { type: 'number' }, p: { type: 'number', description: 'protein grams' },
+          c: { type: 'number', description: 'carbohydrate grams' }, f: { type: 'number', description: 'fat grams' }
+        },
+        required: ['name', 'serving', 'grams', 'kcal', 'p', 'c', 'f'],
+        additionalProperties: false
+      }
     },
-    required: ['items', 'note']
-  }
+    note: { type: 'string', description: 'One short sentence on what was assumed or is uncertain (portion sizes, hidden oils, sauces). Empty if nothing notable.' }
+  },
+  required: ['items', 'note'],
+  additionalProperties: false
 };
+function parseJsonText(content) {
+  const text = (content || []).filter(c => c.type === 'text').map(c => c.text).join('').trim();
+  try { return JSON.parse(text); } catch { /* fall through */ }
+  const m = text.match(/\{[\s\S]*\}/); // tolerate stray words or fences around the JSON
+  if (m) { try { return JSON.parse(m[0]); } catch { /* fall through */ } }
+  return null;
+}
 async function aiMeal(request, env, user) {
   const b = await request.json().catch(() => null);
   const text = String(b?.text || '').trim().slice(0, 600);
@@ -351,17 +369,20 @@ async function aiMeal(request, env, user) {
   if (image) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } });
   content.push({ type: 'text', text: text ? `The person describes this meal as: "${text}"` : 'Identify the foods in this photo.' });
   const r = await callClaude(env, {
-    max_tokens: 1200,
+    max_tokens: 8000,
     system: 'You estimate the nutrition of meals for a food diary. List each distinct food as its own item with a realistic portion and calories, protein, carbs and fat for that portion. Use the photo for portion size when there is one, and standard reference values for the nutrition. Be realistic rather than conservative: include cooking oil, dressings and sauces when they are likely. If the input is not food, return an empty items list and say so in the note.',
-    tools: [MEAL_TOOL], tool_choice: { type: 'tool', name: 'report_meal' },
+    output_config: { format: { type: 'json_schema', schema: MEAL_SCHEMA } },
     messages: [{ role: 'user', content }]
   });
-  if (r.error) return json({ error: r.error }, r.status);
-  const call = (r.body.content || []).find(c => c.type === 'tool_use');
-  const items = Array.isArray(call?.input?.items) ? call.input.items : [];
+  if (r.error) return json({ error: r.error, detail: r.detail }, r.status);
+  const out = parseJsonText(r.body.content);
+  if (!out) return json({ error: 'The estimate came back garbled. Try again.' }, 502);
+  const call = { input: out };
+  const items = Array.isArray(out.items) ? out.items : [];
   return json({
     items: items.slice(0, 12).map(i => ({
       name: String(i.name || 'Food').slice(0, 80), serving: String(i.serving || '1 serving').slice(0, 40),
+      g: Number(i.grams) > 0 ? Math.round(Number(i.grams)) : null,
       kcal: Math.max(0, Math.round(Number(i.kcal) || 0)), p: round1(i.p), c: round1(i.c), f: round1(i.f)
     })),
     note: String(call?.input?.note || '').slice(0, 300)
@@ -377,6 +398,8 @@ const COACH_TOOLS = [
     input_schema: { type: 'object', properties: { name: { type: 'string' }, serving: { type: 'string' }, meal: { type: 'string', enum: ['Breakfast', 'Lunch', 'Dinner', 'Snacks'] }, kcal: { type: 'number' }, p: { type: 'number' }, c: { type: 'number' }, f: { type: 'number' }, date: { type: 'string', description: 'YYYY-MM-DD, defaults to today' } }, required: ['name', 'serving', 'meal', 'kcal', 'p', 'c', 'f'] } },
   { name: 'log_weight', description: 'Log a body weight she tells you.',
     input_schema: { type: 'object', properties: { value: { type: 'number' }, unit: { type: 'string', enum: ['lb', 'kg'] }, date: { type: 'string', description: 'YYYY-MM-DD, defaults to today' } }, required: ['value', 'unit'] } },
+  { name: 'log_cardio', description: 'Log cardio minutes she says she did. Hot yoga is logged as its own kind and does not count as cardio.',
+    input_schema: { type: 'object', properties: { minutes: { type: 'number' }, kind: { type: 'string', enum: ['Zone 2', 'Incline walk', 'Other cardio', 'Hot yoga'] }, date: { type: 'string', description: 'YYYY-MM-DD, defaults to today' } }, required: ['minutes', 'kind'] } },
   { name: 'create_workout', description: 'Save a reusable workout template to her Train tab. Only when she asks you to build or save one.',
     input_schema: { type: 'object', properties: { name: { type: 'string' }, days: { type: 'array', items: { type: 'integer', minimum: 0, maximum: 6 }, description: 'Usual weekdays, Monday = 0. Optional.' },
       exercises: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, sets: { type: 'integer' }, reps: { type: 'string', description: 'e.g. "8-10"' } }, required: ['name', 'sets'] } } }, required: ['name', 'exercises'] } }
@@ -384,22 +407,22 @@ const COACH_TOOLS = [
 function coachSystem(ctx) {
   return `You are the coach inside ${ctx?.name ? ctx.name + "'s" : 'a'} personal fitness and planner app. You are warm, encouraging and practical, like a knowledgeable friend, and you keep replies short: a few sentences, or a short list when she asks for a plan. Plain text only, no markdown headings or tables.
 
-You help with training, nutrition, habits and planning her days. Use the snapshot of her app data below when it is relevant, and use the tools to actually do things in the app (add a to-do, put something on the calendar, log food or weight, save a workout) when she asks. After using a tool, confirm in one short line. Ask before logging anything she did not clearly ask you to log.
+You help with training, nutrition, habits and planning her days. If her data includes a plan, that plan is hers: follow its numbers, rules and safety notes, use today's targets from it, and when she asks for changes, apply her own adjustment rules rather than inventing new ones. Use the snapshot of her app data below when it is relevant, and use the tools to actually do things in the app (add a to-do, put something on the calendar, log food or weight, save a workout) when she asks. After using a tool, confirm in one short line. Ask before logging anything she did not clearly ask you to log.
 
 Stay evidence-based and moderate. Never suggest very low calorie intakes, rapid weight loss, skipping meals to compensate, or training through pain. You are not a medical professional: for injuries, symptoms, medication or anything clinical, say so briefly and suggest she check with one. If she seems to be struggling with food or body image, respond with care and without numbers.
 
 You cannot see her wearable or sleep data, so do not guess at it; if she asks about it, tell her that information stays private to the app's own cards.
 
 Her app data right now (JSON):
-${JSON.stringify(ctx || {}).slice(0, 9000)}`;
+${JSON.stringify(ctx || {}).slice(0, 26000)}`;
 }
 async function aiChat(request, env, user) {
   const b = await request.json().catch(() => null);
   if (!b || !Array.isArray(b.messages) || !b.messages.length) return json({ error: 'Bad request.' }, 400);
   if (JSON.stringify(b.messages).length > 60000) return json({ error: 'That conversation is too long. Start a new chat.' }, 413);
   if (await overLimit(env, user.id, 'chat')) return json({ error: 'You have reached today\'s limit for coach messages. It resets tomorrow.' }, 429);
-  const r = await callClaude(env, { max_tokens: 1000, system: coachSystem(b.context), tools: COACH_TOOLS, messages: b.messages.slice(-40) });
-  if (r.error) return json({ error: r.error }, r.status);
+  const r = await callClaude(env, { max_tokens: 6000, system: coachSystem(b.context), tools: COACH_TOOLS, messages: b.messages.slice(-40) });
+  if (r.error) return json({ error: r.error, detail: r.detail }, r.status);
   return json({ content: r.body.content || [], stop_reason: r.body.stop_reason });
 }
 
@@ -509,6 +532,12 @@ export default {
       if (m === 'GET' && path === '/api/oura/connect') return await ouraConnect(request, env, user);
       if (m === 'GET' && path === '/api/oura/daily') return await ouraDaily(request, env, user);
       if (m === 'POST' && path === '/api/oura/disconnect') return await ouraDisconnect(env, user);
+      if (m === 'POST' && path === '/api/admin/test-ai') {
+        if (user.role !== 'owner') return json({ error: 'Only the app owner can do that.' }, 403);
+        const r = await callClaude(env, { max_tokens: 2000, messages: [{ role: 'user', content: 'Reply with just the word ready.' }] });
+        if (r.error) return json({ ok: false, error: r.error, detail: r.detail });
+        return json({ ok: true, model: r.body.model });
+      }
       if (path === '/api/admin') {
         if (user.role !== 'owner') return json({ error: 'Only the app owner can do that.' }, 403);
         if (m === 'GET') return await getAdmin(request, env, user);
